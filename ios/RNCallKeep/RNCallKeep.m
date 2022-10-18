@@ -50,6 +50,7 @@ static NSString *const RNCallKeepDidLoadWithEvents = @"RNCallKeepDidLoadWithEven
 static bool isSetupNatively;
 static CXProvider* sharedProvider;
 
+
 // should initialise in AppDelegate.m
 RCT_EXPORT_MODULE()
 
@@ -73,6 +74,9 @@ RCT_EXPORT_MODULE()
         self.callKeepProvider = sharedProvider;
         [self.callKeepProvider setDelegate:self queue:nil];
     }
+    
+    _answerActions = [[NSMutableDictionary alloc] init];
+
     return self;
 }
 
@@ -494,9 +498,7 @@ RCT_EXPORT_METHOD(setAudioRoute: (NSString *)uuid
                   resolver:(RCTPromiseResolveBlock)resolve
                   rejecter:(RCTPromiseRejectBlock)reject)
 {
-#ifdef DEBUG
     NSLog(@"[RNCallKeep][setAudioRoute] - inputName: %@", inputName);
-#endif
     @try {
         NSError* err = nil;
         AVAudioSession* myAudioSession = [AVAudioSession sharedInstance];
@@ -511,7 +513,8 @@ RCT_EXPORT_METHOD(setAudioRoute: (NSString *)uuid
 
         NSArray *ports = [RNCallKeep getAudioInputs];
 
-        BOOL isCategorySetted = [myAudioSession setCategory:AVAudioSessionCategoryPlayAndRecord withOptions:AVAudioSessionCategoryOptionAllowBluetooth error:&err];
+        BOOL isCategorySetted = [myAudioSession setCategory:AVAudioSessionCategoryPlayAndRecord mode:AVAudioSessionModeVoiceChat options:  AVAudioSessionCategoryOptionAllowAirPlay | AVAudioSessionCategoryOptionAllowBluetooth | AVAudioSessionCategoryOptionAllowBluetoothA2DP error:&err];
+        
         if (!isCategorySetted)
         {
             NSLog(@"[RNCallKeep][setAudioRoute] setCategory failed");
@@ -558,6 +561,42 @@ RCT_EXPORT_METHOD(getAudioRoutes: (RCTPromiseResolveBlock)resolve
         reject(@"Failure to get audio routes", e, nil);
     }
 }
+
+RCT_EXPORT_METHOD(startAudioSession: (RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+{
+    NSLog(@"[RNCallKeep][startAudioSession]");
+    @try {
+        [self configureAudioSession];
+        NSArray *inputs = [RNCallKeep getAudioInputs];
+        NSMutableArray *formatedInputs = [RNCallKeep formatAudioInputs: inputs];
+        resolve(formatedInputs);
+    }
+    @catch ( NSException *e ) {
+        NSLog(@"[RNCallKeep][startAudioSession] exception: %@",e);
+        reject(@"Failure to start audio session", e, nil);
+    }
+}
+
+RCT_EXPORT_METHOD(activateAudioSession: (RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+{
+    NSLog(@"[RNCallKeep][activateAudioSession]");
+    @try {
+        NSError* err = nil;
+        AVAudioSession* audioSession = [AVAudioSession sharedInstance];
+        BOOL isActivated = [audioSession setActive:TRUE error:&err];
+        if(!isActivated){
+            NSLog(@"[RNCallKeep][configureAudioSession][setActive] failed");
+            [NSException raise:@"audioSession#setActive failed" format:@"error: %@", err];
+        }
+    }
+    @catch ( NSException *e ) {
+        NSLog(@"[RNCallKeep][activateAudioSession] exception: %@",e);
+        reject(@"Failure to start audio session", e, nil);
+    }
+}
+
 
 + (NSMutableArray *) formatAudioInputs: (NSMutableArray *)inputs
 {
@@ -740,10 +779,12 @@ RCT_EXPORT_METHOD(getAudioRoutes: (RCTPromiseResolveBlock)resolve
     callUpdate.supportsUngrouping = supportsUngrouping;
     callUpdate.hasVideo = hasVideo;
     callUpdate.localizedCallerName = localizedCallerName;
-
+    
+    RNCallKeep *callKeep = [RNCallKeep allocWithZone: nil];
+    [callKeep configureAudioSession];
+    
     [RNCallKeep initCallKitProvider];
     [sharedProvider reportNewIncomingCallWithUUID:uuid update:callUpdate completion:^(NSError * _Nullable error) {
-        RNCallKeep *callKeep = [RNCallKeep allocWithZone: nil];
         [callKeep sendEventWithNameWrapper:RNCallKeepDidDisplayIncomingCall body:@{
             @"error": error && error.localizedDescription ? error.localizedDescription : @"",
             @"errorCode": error ? [callKeep getIncomingCallErrorCode:error] : @"",
@@ -761,7 +802,7 @@ RCT_EXPORT_METHOD(getAudioRoutes: (RCTPromiseResolveBlock)resolve
         if (error == nil) {
             // Workaround per https://forums.developer.apple.com/message/169511
             if ([callKeep lessThanIos10_2]) {
-                [callKeep configureAudioSession];
+               // TODO_REMOVE [callKeep configureAudioSession];
             }
         }
         if (completion != nil) {
@@ -851,21 +892,35 @@ RCT_EXPORT_METHOD(getAudioRoutes: (RCTPromiseResolveBlock)resolve
 
 - (void)configureAudioSession
 {
-#ifdef DEBUG
     NSLog(@"[RNCallKeep][configureAudioSession] Activating audio session");
-#endif
 
-    AVAudioSession* audioSession = [AVAudioSession sharedInstance];
-    [audioSession setCategory:AVAudioSessionCategoryPlayAndRecord withOptions:AVAudioSessionCategoryOptionAllowBluetooth error:nil];
-
-    [audioSession setMode:AVAudioSessionModeDefault error:nil];
-
-    double sampleRate = 44100.0;
-    [audioSession setPreferredSampleRate:sampleRate error:nil];
-
-    NSTimeInterval bufferDuration = .005;
-    [audioSession setPreferredIOBufferDuration:bufferDuration error:nil];
-    [audioSession setActive:TRUE error:nil];
+    @try{
+        NSError* err = nil;
+        
+        AVAudioSession* audioSession = [AVAudioSession sharedInstance];
+        BOOL isConfigured = [audioSession setCategory:AVAudioSessionCategoryPlayAndRecord mode:AVAudioSessionModeVoiceChat options:  AVAudioSessionCategoryOptionAllowAirPlay | AVAudioSessionCategoryOptionAllowBluetooth | AVAudioSessionCategoryOptionAllowBluetoothA2DP error:&err];
+        if(!isConfigured){
+            NSLog(@"[RNCallKeep][configureAudioSession][setCategory] failed");
+            [NSException raise:@"audioSession#setCategory failed" format:@"error: %@", err];
+        }
+        
+        double sampleRate = 44100.0;
+        BOOL sampleRateSetted = [audioSession setPreferredSampleRate:sampleRate error:&err];
+        if(!sampleRateSetted){
+            NSLog(@"[RNCallKeep][configureAudioSession][setPreferredSampleRate] failed");
+            [NSException raise:@"audioSession#setPreferredSampleRate failed" format:@"error: %@", err];
+        }
+        
+        NSTimeInterval bufferDuration = .005;
+        BOOL bufferSetted = [audioSession setPreferredIOBufferDuration:bufferDuration error:&err];
+        if(!bufferSetted){
+            NSLog(@"[RNCallKeep][configureAudioSession][setPreferredIOBufferDuration] failed");
+            [NSException raise:@"audioSession#setPreferredIOBufferDuration failed" format:@"error: %@", err];
+        }
+    }
+    @catch ( NSException *e ){
+        NSLog(@"[RNCallKeep][configureAudioSession] exception: %@",e);
+    }
 }
 
 + (BOOL)application:(UIApplication *)application
@@ -979,7 +1034,7 @@ continueUserActivity:(NSUserActivity *)userActivity
     NSLog(@"[RNCallKeep][CXProviderDelegate][provider:performStartCallAction]");
 #endif
     //do this first, audio sessions are flakey
-    [self configureAudioSession];
+    // TODO_REMOVE [self configureAudioSession];
     //tell the JS to actually make the call
     [self sendEventWithNameWrapper:RNCallKeepDidReceiveStartCallAction body:@{ @"callUUID": [action.callUUID.UUIDString lowercaseString], @"handle": action.handle.value }];
     [action fulfill];
@@ -999,15 +1054,25 @@ RCT_EXPORT_METHOD(reportUpdatedCall:(NSString *)uuidString contactIdentifier:(NS
     [self.callKeepProvider reportCallWithUUID:uuid updated:callUpdate];
 }
 
+RCT_EXPORT_METHOD(fulfillAnswerAction:(NSString *)uuidString)
+{
+    NSLog(@"[RNCallKeep][fulfillAnswerAction] uuid = %i", uuidString);
+    NSUUID *uuid = [[NSUUID alloc] initWithUUIDString:uuidString];
+    [[_answerActions objectForKey:uuidString] fulfill];
+    [_answerActions removeObjectForKey:uuidString];
+}
+
 // Answering incoming call
 - (void)provider:(CXProvider *)provider performAnswerCallAction:(CXAnswerCallAction *)action
 {
 #ifdef DEBUG
     NSLog(@"[RNCallKeep][CXProviderDelegate][provider:performAnswerCallAction]");
 #endif
-    [self configureAudioSession];
+    // TODO_REMOVE [self configureAudioSession];
     [self sendEventWithNameWrapper:RNCallKeepPerformAnswerCallAction body:@{ @"callUUID": [action.callUUID.UUIDString lowercaseString] }];
-    [action fulfill];
+
+    [_answerActions setObject:action forKey:[action.callUUID.UUIDString lowercaseString]];
+    //[action fulfill];
 }
 
 // Ending incoming call
@@ -1057,9 +1122,7 @@ RCT_EXPORT_METHOD(reportUpdatedCall:(NSString *)uuidString contactIdentifier:(NS
 
 - (void)provider:(CXProvider *)provider didActivateAudioSession:(AVAudioSession *)audioSession
 {
-#ifdef DEBUG
     NSLog(@"[RNCallKeep][CXProviderDelegate][provider:didActivateAudioSession]");
-#endif
     NSDictionary *userInfo
     = @{
         AVAudioSessionInterruptionTypeKey: [NSNumber numberWithInt:AVAudioSessionInterruptionTypeEnded],
@@ -1067,16 +1130,15 @@ RCT_EXPORT_METHOD(reportUpdatedCall:(NSString *)uuidString contactIdentifier:(NS
     };
     [[NSNotificationCenter defaultCenter] postNotificationName:AVAudioSessionInterruptionNotification object:nil userInfo:userInfo];
 
-    [self configureAudioSession];
+    // TODO_REMOVE [self configureAudioSession];
     [self sendEventWithNameWrapper:RNCallKeepDidActivateAudioSession body:nil];
 }
 
 - (void)provider:(CXProvider *)provider didDeactivateAudioSession:(AVAudioSession *)audioSession
 {
-#ifdef DEBUG
     NSLog(@"[RNCallKeep][CXProviderDelegate][provider:didDeactivateAudioSession]");
-#endif
     [self sendEventWithNameWrapper:RNCallKeepDidDeactivateAudioSession body:nil];
 }
 
 @end
+

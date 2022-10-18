@@ -150,6 +150,10 @@ declare module 'react-native-callkeep' {
 
     static setAudioRoute: (uuid:string, inputName: string) => Promise<void>
 
+    static startAudioSession(): Promise<void>
+    static activateAudioSession(): Promise<void>
+    static fulfillAnswerAction(uuid: string): void
+
     /**
      * @description supportConnectionService method is available only on Android.
      */

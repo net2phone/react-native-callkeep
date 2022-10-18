@@ -202,6 +202,9 @@ class RNCallKeep {
   getAudioRoutes = () => RNCallKeepModule.getAudioRoutes();
 
   setAudioRoute = (uuid, inputName) => RNCallKeepModule.setAudioRoute(uuid, inputName);
+  startAudioSession = () => RNCallKeepModule.startAudioSession();
+  activateAudioSession = () => RNCallKeepModule.activateAudioSession();
+  fulfillAnswerAction = (uuid) => RNCallKeepModule.fulfillAnswerAction(uuid);
 
   checkIfBusy = () =>
     isIOS ? RNCallKeepModule.checkIfBusy() : Promise.reject('RNCallKeep.checkIfBusy was called from unsupported OS');

@@ -16,6 +16,7 @@
 
 @interface RNCallKeep : RCTEventEmitter <CXProviderDelegate>
 
+@property (nonatomic, retain) NSMutableDictionary *answerActions;
 @property (nonatomic, strong) CXCallController *callKeepCallController;
 @property (nonatomic, strong) CXProvider *callKeepProvider;
 
