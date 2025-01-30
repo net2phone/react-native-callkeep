@@ -47,6 +47,7 @@ static NSString *const RNCallKeepDidLoadWithEvents = @"RNCallKeepDidLoadWithEven
     bool _isAudioSessionActive;
     bool _isReachable;
     NSMutableArray *_delayedEvents;
+    bool _repeatingUnholdInProgress;
 }
 
 static bool isSetupNatively;
@@ -64,6 +65,7 @@ RCT_EXPORT_MODULE()
         _shouldForceBluetooth = TRUE;
         _isStartCallActionEventListenerAdded = NO;
         _isReachable = NO;
+        _repeatingUnholdInProgress = NO;
         if (_delayedEvents == nil) _delayedEvents = [NSMutableArray array];
 
         [[NSNotificationCenter defaultCenter] addObserver:self
@@ -971,7 +973,7 @@ RCT_EXPORT_METHOD(getAudioRoutes: (RCTPromiseResolveBlock)resolve
 
                 if (!isSetted) {
                     [NSException raise:@"forceBluetoothPreferredInput failed" format:@"error: %@", err];
-                }   
+                }
                 
                 break;
             } @catch (NSException *e) {
@@ -1151,9 +1153,20 @@ RCT_EXPORT_METHOD(configureVideoAudioSession)
 #ifdef DEBUG
     NSLog(@"[RNCallKeep][CXProviderDelegate][provider:performSetHeldCallAction]");
 #endif
-
-    [self sendEventWithNameWrapper:RNCallKeepDidToggleHoldAction body:@{ @"hold": @(action.onHold), @"callUUID": [action.callUUID.UUIDString lowercaseString] }];
+    if(!_repeatingUnholdInProgress) {
+        [self sendEventWithNameWrapper:RNCallKeepDidToggleHoldAction body:@{ @"hold": @(action.onHold), @"callUUID": [action.callUUID.UUIDString lowercaseString] }];
+    }
     [action fulfill];
+    
+    if(!_repeatingUnholdInProgress) {
+        if (!action.onHold) {
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.1 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                [self checkAudioSessionAfterUnhold:action.callUUID];
+            });
+        }
+    } else if (!action.onHold) {
+        _repeatingUnholdInProgress = NO;
+    }
 }
 
 -(void)provider:(CXProvider *)provider performSetGroupCallAction:(CXSetGroupCallAction *)action
@@ -1217,6 +1230,18 @@ RCT_EXPORT_METHOD(configureVideoAudioSession)
 #endif
     _isAudioSessionActive = NO;
     [self sendEventWithNameWrapper:RNCallKeepDidDeactivateAudioSession body:nil];
+}
+
+- (void)checkAudioSessionAfterUnhold:(NSUUID *) callUUID {
+    if (!_isAudioSessionActive) {
+        _repeatingUnholdInProgress = YES;
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.1 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            [self setOnHold:callUUID.UUIDString :YES];
+        });
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            [self setOnHold:callUUID.UUIDString :NO];
+        });
+    }
 }
 
 @end
