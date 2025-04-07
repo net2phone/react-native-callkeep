@@ -62,16 +62,11 @@ RCT_EXPORT_MODULE()
     NSLog(@"[RNCallKeep][init]");
 #endif
     if (self = [super init]) {
-        _shouldForceBluetooth = TRUE;
         _isStartCallActionEventListenerAdded = NO;
         _isReachable = NO;
         _repeatingUnholdInProgress = NO;
         if (_delayedEvents == nil) _delayedEvents = [NSMutableArray array];
 
-        [[NSNotificationCenter defaultCenter] addObserver:self
-                                                 selector:@selector(onAudioRouteChange:)
-                                                     name:AVAudioSessionRouteChangeNotification
-                                                   object:nil];
         // Init provider directly, in case of an app killed and when we've already stored our settings
         [RNCallKeep initCallKitProvider];
 
@@ -139,27 +134,6 @@ RCT_EXPORT_MODULE()
     _hasListeners = FALSE;
 }
 
-- (void)onAudioRouteChange:(NSNotification *)notification
-{
-    NSDictionary *info = notification.userInfo;
-    NSInteger reason = [[info valueForKey:AVAudioSessionRouteChangeReasonKey] integerValue];
-    NSString *output = [RNCallKeep getAudioOutput];
-
-    if (output == nil) {
-        return;
-    }
-
-    [self sendEventWithName:RNCallKeepDidChangeAudioRoute body:@{
-        @"output": output,
-        @"reason": @(reason),
-    }];
-
-    if (_shouldForceBluetooth) {
-        // Force Bluetooth as soon as possible once onAudioRouteChange event handler finishes
-        _forceBluetoothTimer = [NSTimer scheduledTimerWithTimeInterval:.1 target:self selector:@selector(forceBluetoothPreferredInput:) userInfo:nil repeats:YES];
-        [_forceBluetoothTimer fire];
-    }
-}
 
 - (void)sendEventWithNameWrapper:(NSString *)name body:(id)body {
     NSLog(@"[[RNCallKeep]] sendEventWithNameWrapper: %@, hasListeners : %@", name, _hasListeners ? @"YES": @"NO");
@@ -392,9 +366,6 @@ RCT_EXPORT_METHOD(endAllCalls)
         _isAudioSessionActive = NO;
         [self requestTransaction:transaction];
     }
-
-    // We are ready to force the Bluetooth for new calls
-    _shouldForceBluetooth = true;
 }
 
 RCT_EXPORT_METHOD(setOnHold:(NSString *)uuidString :(BOOL)shouldHold)
@@ -542,151 +513,6 @@ RCT_EXPORT_METHOD(getCalls:(RCTPromiseResolveBlock)resolve
     resolve([RNCallKeep getCalls]);
 }
 
-RCT_EXPORT_METHOD(setAudioRoute: (NSString *)uuid
-                  inputName:(NSString *)inputName
-                  resolver:(RCTPromiseResolveBlock)resolve
-                  rejecter:(RCTPromiseRejectBlock)reject)
-{
-#ifdef DEBUG
-    NSLog(@"[RNCallKeep][setAudioRoute] - inputName: %@", inputName);
-#endif
-    @try {
-        NSError* err = nil;
-        AVAudioSession* myAudioSession = [AVAudioSession sharedInstance];
-        if ([inputName isEqualToString:@"Speaker"]) {
-            BOOL isOverrided = [myAudioSession overrideOutputAudioPort:AVAudioSessionPortOverrideSpeaker error:&err];
-
-            if (isOverrided) {
-                _shouldForceBluetooth = FALSE;
-            }
-
-            if(!isOverrided){
-                [NSException raise:@"overrideOutputAudioPort failed" format:@"error: %@", err];
-            }
-            resolve(@"Speaker");
-            return;
-        }
-
-        NSArray *ports = [RNCallKeep getAudioInputs];
-
-        BOOL isCategorySetted = [myAudioSession setCategory:AVAudioSessionCategoryPlayAndRecord mode:AVAudioSessionModeVoiceChat options: AVAudioSessionCategoryOptionAllowAirPlay | AVAudioSessionCategoryOptionAllowBluetooth | AVAudioSessionCategoryOptionAllowBluetoothA2DP error:&err];
-        if (!isCategorySetted)
-        {
-            NSLog(@"[RNCallKeep][setAudioRoute] setCategory failed");
-            [NSException raise:@"setCategory failed" format:@"error: %@", err];
-        }
-
-        BOOL isCategoryActivated = [myAudioSession setActive:YES error:&err];
-        if (!isCategoryActivated)
-        {
-            NSLog(@"[RNCallKeep][setAudioRoute] setActive failed");
-            [NSException raise:@"setActive failed" format:@"error: %@", err];
-        }
-
-        for (AVAudioSessionPortDescription *port in ports) {
-            if ([port.portName isEqualToString:inputName]) {
-                BOOL isSetted = [myAudioSession setPreferredInput:(AVAudioSessionPortDescription *)port error:&err];
-
-                if (isSetted) {
-                    if ([port.portType isEqualToString:AVAudioSessionPortBluetoothHFP] ||
-                        [port.portType isEqualToString:AVAudioSessionPortBluetoothA2DP]) {
-                        _shouldForceBluetooth = TRUE;
-                    } else {
-                        _shouldForceBluetooth = FALSE;
-                    }
-                }
-
-                if(!isSetted){
-                    [NSException raise:@"setPreferredInput failed" format:@"error: %@", err];
-                }
-                resolve(inputName);
-                return;
-            }
-        }
-    }
-    @catch ( NSException *e ){
-        NSLog(@"[RNCallKeep][setAudioRoute] exception: %@",e);
-        reject(@"Failure to set audio route", e, nil);
-    }
-}
-
-RCT_EXPORT_METHOD(getAudioRoutes: (RCTPromiseResolveBlock)resolve
-                  rejecter:(RCTPromiseRejectBlock)reject)
-{
-#ifdef DEBUG
-    NSLog(@"[RNCallKeep][getAudioRoutes]");
-#endif
-    @try {
-        NSArray *inputs = [RNCallKeep getAudioInputs];
-        NSMutableArray *formatedInputs = [RNCallKeep formatAudioInputs: inputs];
-        resolve(formatedInputs);
-    }
-    @catch ( NSException *e ) {
-        NSLog(@"[RNCallKeep][getAudioRoutes] exception: %@",e);
-        reject(@"Failure to get audio routes", e, nil);
-    }
-}
-
-+ (NSMutableArray *) formatAudioInputs: (NSMutableArray *)inputs
-{
-    NSMutableArray *newInputs = [NSMutableArray new];
-
-    NSMutableDictionary *speakerDict = [[NSMutableDictionary alloc]init];
-    [speakerDict setObject:@"Speaker" forKey:@"name"];
-    [speakerDict setObject:AVAudioSessionPortBuiltInSpeaker forKey:@"type"];
-    [newInputs addObject:speakerDict];
-
-    for (AVAudioSessionPortDescription* input in inputs)
-    {
-        NSString *str = [NSString stringWithFormat:@"PORTS :\"%@\": UID:%@", input.portName, input.UID ];
-        NSMutableDictionary *dict = [[NSMutableDictionary alloc]init];
-        [dict setObject:input.portName forKey:@"name"];
-        NSString * type = [RNCallKeep getAudioInputType: input.portType];
-        if(type)
-        {
-            [dict setObject:type forKey:@"type"];
-            [newInputs addObject:dict];
-        }
-    }
-    return newInputs;
-}
-
-+ (NSArray *) getAudioInputs
-{
-    NSError* err = nil;
-    NSString *str = nil;
-
-    AVAudioSession* myAudioSession = [AVAudioSession sharedInstance];
-
-    NSArray *inputs = [myAudioSession availableInputs];
-    return inputs;
-}
-
-+ (NSString *) getAudioInputType: (NSString *) type
-{
-    if ([type isEqualToString:AVAudioSessionPortBuiltInMic]){
-        return @"Phone";
-    }
-    else if ([type isEqualToString:AVAudioSessionPortHeadsetMic]){
-        return @"Headset";
-    }
-    else if ([type isEqualToString:AVAudioSessionPortHeadphones]){
-        return @"Headset";
-    }
-    else if ([type isEqualToString:AVAudioSessionPortBluetoothHFP]){
-        return @"Bluetooth";
-    }
-    else if ([type isEqualToString:AVAudioSessionPortBluetoothA2DP]){
-        return @"Bluetooth";
-    }
-    else if ([type isEqualToString:AVAudioSessionPortBuiltInSpeaker]){
-        return @"Speaker";
-    }
-    else{
-        return nil;
-    }
-}
-
 - (void)requestTransaction:(CXTransaction *)transaction
 {
 #ifdef DEBUG
@@ -826,10 +652,6 @@ RCT_EXPORT_METHOD(getAudioRoutes: (RCTPromiseResolveBlock)resolve
             @"fromPushKit": fromPushKit ? @"1" : @"0",
             @"payload": payload ? payload : @"",
         }];
-        if (error == nil) {
-            // Workaround per https://forums.developer.apple.com/message/169511
-            [callKeep configureAudioSession:AVAudioSessionModeVoiceChat];
-        }
         if (completion != nil) {
             completion();
         }
@@ -913,74 +735,6 @@ RCT_EXPORT_METHOD(getAudioRoutes: (RCTPromiseResolveBlock)resolve
         }
     }
     return providerConfiguration;
-}
-
-- (void)configureAudioSession:(AVAudioSessionMode)mode
-{
-#ifdef DEBUG
-    NSLog(@"[RNCallKeep][configureAudioSession] Activating audio session");
-#endif
-    @try{
-        NSError* err = nil;
-   
-        AVAudioSession* audioSession = [AVAudioSession sharedInstance];
-        BOOL isConfigured = [audioSession setCategory:AVAudioSessionCategoryPlayAndRecord mode:mode options:  AVAudioSessionCategoryOptionAllowAirPlay | AVAudioSessionCategoryOptionAllowBluetooth | AVAudioSessionCategoryOptionAllowBluetoothA2DP error:&err];
-        if(!isConfigured){
-            NSLog(@"[RNCallKeep][configureAudioSession][setCategory] failed");
-            [NSException raise:@"audioSession#setCategory failed" format:@"error: %@", err];
-        }
-   
-        double sampleRate = 44100.0;
-        BOOL sampleRateSetted = [audioSession setPreferredSampleRate:sampleRate error:&err];
-        if(!sampleRateSetted){
-            NSLog(@"[RNCallKeep][configureAudioSession][setPreferredSampleRate] failed");
-            [NSException raise:@"audioSession#setPreferredSampleRate failed" format:@"error: %@", err];
-        }
-   
-        NSTimeInterval bufferDuration = .005;
-        BOOL bufferSetted = [audioSession setPreferredIOBufferDuration:bufferDuration error:&err];
-        if(!bufferSetted){
-            NSLog(@"[RNCallKeep][configureAudioSession][setPreferredIOBufferDuration] failed");
-            [NSException raise:@"audioSession#setPreferredIOBufferDuration failed" format:@"error: %@", err];
-        }
-   
-        BOOL isActivated = [audioSession setActive:TRUE error:&err];
-        if(!isActivated){
-            NSLog(@"[RNCallKeep][configureAudioSession][setActive] failed");
-            [NSException raise:@"audioSession#setActive failed" format:@"error: %@", err];
-        }
-    }
-    @catch ( NSException *e ){
-        NSLog(@"[RNCallKeep][configureAudioSession] exception: %@",e);
-    }
-    
-}
-
-- (void) forceBluetoothPreferredInput:(id)sender
-{
-    [_forceBluetoothTimer invalidate];
-    _forceBluetoothTimer = nil;
-    
-    AVAudioSession* audioSession = [AVAudioSession sharedInstance];
-    NSArray *ports = [RNCallKeep getAudioInputs];
-    
-    for (AVAudioSessionPortDescription *port in ports) {
-        if ([port.portType isEqualToString:AVAudioSessionPortBluetoothHFP] ||
-            [port.portType isEqualToString:AVAudioSessionPortBluetoothA2DP]) {
-            @try {
-                NSError* err = nil;
-                BOOL isSetted = [audioSession setPreferredInput:(AVAudioSessionPortDescription *)port error:&err];
-
-                if (!isSetted) {
-                    [NSException raise:@"forceBluetoothPreferredInput failed" format:@"error: %@", err];
-                }
-                
-                break;
-            } @catch (NSException *e) {
-                NSLog(@"[RNCallKeep][forceBluetoothPreferredInput] exception: %@",e);
-            }
-        }
-    }
 }
 
 + (BOOL)application:(UIApplication *)application
@@ -1094,8 +848,6 @@ continueUserActivity:(NSUserActivity *)userActivity
 #ifdef DEBUG
     NSLog(@"[RNCallKeep][CXProviderDelegate][provider:performStartCallAction]");
 #endif
-    //do this first, audio sessions are flakey
-    //[self configureAudioSession];
     //tell the JS to actually make the call
     [self sendEventWithNameWrapper:RNCallKeepDidReceiveStartCallAction body:@{ @"callUUID": [action.callUUID.UUIDString lowercaseString], @"handle": action.handle.value }];
     [action fulfill];
@@ -1115,16 +867,6 @@ RCT_EXPORT_METHOD(reportUpdatedCall:(NSString *)uuidString contactIdentifier:(NS
     [self.callKeepProvider reportCallWithUUID:uuid updated:callUpdate];
 }
 
-RCT_EXPORT_METHOD(configureVoiceAudioSession)
-{
-    [self configureAudioSession:AVAudioSessionModeVoiceChat];
-}
-
-
-RCT_EXPORT_METHOD(configureVideoAudioSession)
-{
-    [self configureAudioSession:AVAudioSessionModeVideoChat];
-}
 
 // Answering incoming call
 - (void)provider:(CXProvider *)provider performAnswerCallAction:(CXAnswerCallAction *)action
@@ -1132,7 +874,6 @@ RCT_EXPORT_METHOD(configureVideoAudioSession)
 #ifdef DEBUG
     NSLog(@"[RNCallKeep][CXProviderDelegate][provider:performAnswerCallAction]");
 #endif
-    //[self configureAudioSession];
     [self sendEventWithNameWrapper:RNCallKeepPerformAnswerCallAction body:@{ @"callUUID": [action.callUUID.UUIDString lowercaseString] }];
     [action fulfill];
 }
@@ -1223,7 +964,6 @@ RCT_EXPORT_METHOD(configureVideoAudioSession)
     };
     [[NSNotificationCenter defaultCenter] postNotificationName:AVAudioSessionInterruptionNotification object:nil userInfo:userInfo];
 
-    //[self configureAudioSession];
     _isAudioSessionActive = YES;
 
     [self sendEventWithNameWrapper:RNCallKeepDidActivateAudioSession body:nil];
