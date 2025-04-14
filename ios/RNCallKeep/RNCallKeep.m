@@ -652,6 +652,10 @@ RCT_EXPORT_METHOD(getCalls:(RCTPromiseResolveBlock)resolve
             @"fromPushKit": fromPushKit ? @"1" : @"0",
             @"payload": payload ? payload : @"",
         }];
+        if (error == nil) {
+            // Workaround per https://forums.developer.apple.com/message/169511
+            [callKeep configureAudioSession:AVAudioSessionModeVoiceChat];
+        }
         if (completion != nil) {
             completion();
         }
@@ -988,6 +992,47 @@ RCT_EXPORT_METHOD(reportUpdatedCall:(NSString *)uuidString contactIdentifier:(NS
             [self setOnHold:callUUID.UUIDString :NO];
         });
     }
+}
+
+- (void)configureAudioSession:(AVAudioSessionMode)mode
+{
+#ifdef DEBUG
+    NSLog(@"[RNCallKeep][configureAudioSession] Activating audio session");
+#endif
+    @try{
+        NSError* err = nil;
+   
+        AVAudioSession* audioSession = [AVAudioSession sharedInstance];
+        BOOL isConfigured = [audioSession setCategory:AVAudioSessionCategoryPlayAndRecord mode:mode options:  AVAudioSessionCategoryOptionAllowAirPlay | AVAudioSessionCategoryOptionAllowBluetooth | AVAudioSessionCategoryOptionAllowBluetoothA2DP error:&err];
+        if(!isConfigured){
+            NSLog(@"[RNCallKeep][configureAudioSession][setCategory] failed");
+            [NSException raise:@"audioSession#setCategory failed" format:@"error: %@", err];
+        }
+   
+        double sampleRate = 44100.0;
+        BOOL sampleRateSetted = [audioSession setPreferredSampleRate:sampleRate error:&err];
+        if(!sampleRateSetted){
+            NSLog(@"[RNCallKeep][configureAudioSession][setPreferredSampleRate] failed");
+            [NSException raise:@"audioSession#setPreferredSampleRate failed" format:@"error: %@", err];
+        }
+   
+        NSTimeInterval bufferDuration = .005;
+        BOOL bufferSetted = [audioSession setPreferredIOBufferDuration:bufferDuration error:&err];
+        if(!bufferSetted){
+            NSLog(@"[RNCallKeep][configureAudioSession][setPreferredIOBufferDuration] failed");
+            [NSException raise:@"audioSession#setPreferredIOBufferDuration failed" format:@"error: %@", err];
+        }
+   
+        BOOL isActivated = [audioSession setActive:TRUE error:&err];
+        if(!isActivated){
+            NSLog(@"[RNCallKeep][configureAudioSession][setActive] failed");
+            [NSException raise:@"audioSession#setActive failed" format:@"error: %@", err];
+        }
+    }
+    @catch ( NSException *e ){
+        NSLog(@"[RNCallKeep][configureAudioSession] exception: %@",e);
+    }
+    
 }
 
 @end
