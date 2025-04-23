@@ -898,12 +898,6 @@ RCT_EXPORT_METHOD(reportUpdatedCall:(NSString *)uuidString contactIdentifier:(NS
 #ifdef DEBUG
     NSLog(@"[RNCallKeep][CXProviderDelegate][provider:performSetHeldCallAction]");
 #endif
-
-    // Fix bug in apple API - callkit doesn't reActivate audioSession after hold
-    if (action.onHold) {
-        [AVAudioSession.sharedInstance setActive:NO error:nil];
-    }
-
     if(!_repeatingUnholdInProgress) {
         [self sendEventWithNameWrapper:RNCallKeepDidToggleHoldAction body:@{ @"hold": @(action.onHold), @"callUUID": [action.callUUID.UUIDString lowercaseString] }];
     }
