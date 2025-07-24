@@ -44,6 +44,11 @@ continueUserActivity:(NSUserActivity *)userActivity
                       payload:(NSDictionary * _Nullable)payload
         withCompletionHandler:(void (^_Nullable)(void))completion;
 
++(void)updateDisplay:(NSString *)uuidString
+         displayName:(NSString *)displayName
+                 uri:(NSString *)uri
+             options:(NSDictionary *)options;
+
 + (void)endCallWithUUID:(NSString *)uuidString
                  reason:(int)reason;
 
