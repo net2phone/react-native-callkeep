@@ -932,8 +932,10 @@ RCT_EXPORT_METHOD(reportUpdatedCall:(NSString *)uuidString contactIdentifier:(NS
     NSLog(@"[RNCallKeep][CXProviderDelegate][provider:performSetHeldCallAction]");
 #endif
 
-    // Fix bug in apple API - callkit doesn't reActivate audioSession after hold
-    if (action.onHold) {
+    // Fix bug in apple API - callkit doesn't reActivate audioSession after hold.
+    // Not while another connected call stays active (one member of a merged
+    // call put on hold): that call would lose its audio until the un-hold.
+    if (action.onHold && ![self hasOtherActiveCall:action.callUUID]) {
         [AVAudioSession.sharedInstance setActive:NO error:nil];
     }
 
@@ -1013,6 +1015,17 @@ RCT_EXPORT_METHOD(reportUpdatedCall:(NSString *)uuidString contactIdentifier:(NS
 #endif
     _isAudioSessionActive = NO;
     [self sendEventWithNameWrapper:RNCallKeepDidDeactivateAudioSession body:nil];
+}
+
+- (BOOL)hasOtherActiveCall:(NSUUID *)callUUID
+{
+    CXCallObserver *callObserver = self.callKeepCallController.callObserver ?: [[CXCallObserver alloc] init];
+    for (CXCall *call in callObserver.calls) {
+        if (![call.UUID isEqual:callUUID] && call.hasConnected && !call.hasEnded && !call.isOnHold) {
+            return YES;
+        }
+    }
+    return NO;
 }
 
 - (void)checkAudioSessionAfterUnhold:(NSUUID *) callUUID {
